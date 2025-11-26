@@ -1,11 +1,11 @@
 export function createAudioSystem() {
-  let ctx = null;
+  let ctx;
   let started = false;
 
   let master, lowRumble, lowGain, rumblePanner;
   let hissNoise, hissFilter, hissGain, hissPanner;
 
-  function initAudio() {
+  function unlockAudio() {
     if (started) return;
 
     ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -29,11 +29,8 @@ export function createAudioSystem() {
     lowRumble.connect(lowGain);
     lowGain.connect(rumblePanner);
     rumblePanner.connect(master);
-    lowRumble.start();
 
     // HISS
-    hissNoise = createNoise(ctx);
-
     hissFilter = ctx.createBiquadFilter();
     hissFilter.type = 'bandpass';
     hissFilter.frequency.value = 900;
@@ -44,34 +41,31 @@ export function createAudioSystem() {
 
     hissPanner = ctx.createPanner();
     hissPanner.panningModel = 'HRTF';
-    hissPanner.distanceModel = 'inverse';
 
-    hissNoise.connect(hissFilter);
     hissFilter.connect(hissGain);
     hissGain.connect(hissPanner);
     hissPanner.connect(master);
 
-    // Proper listener positioning (modern API)
-    ctx.listener.positionX.setValueAtTime(0, ctx.currentTime);
-    ctx.listener.positionY.setValueAtTime(0, ctx.currentTime);
-    ctx.listener.positionZ.setValueAtTime(0, ctx.currentTime);
+    hissNoise = createNoise(ctx);
 
-    ctx.listener.forwardX.setValueAtTime(0, ctx.currentTime);
-    ctx.listener.forwardY.setValueAtTime(0, ctx.currentTime);
-    ctx.listener.forwardZ.setValueAtTime(-1, ctx.currentTime);
-    ctx.listener.upX.setValueAtTime(0, ctx.currentTime);
-    ctx.listener.upY.setValueAtTime(1, ctx.currentTime);
-    ctx.listener.upZ.setValueAtTime(0, ctx.currentTime);
+    // Listener setup
+    ctx.listener.positionX.value = 0;
+    ctx.listener.positionY.value = 0;
+    ctx.listener.positionZ.value = 0;
 
-    if (ctx.state === 'suspended') ctx.resume();
+    ctx.resume();
+    lowRumble.start();
+    hissNoise.start();
+
     started = true;
   }
 
-  window.addEventListener('pointerdown', initAudio, { once: true });
-  window.addEventListener('keydown', initAudio, { once: true });
+  document.addEventListener('click', unlockAudio, { once: true });
+  document.addEventListener('touchstart', unlockAudio, { once: true });
+  document.addEventListener('keydown', unlockAudio, { once: true });
 
   function update(threat = 0, focus = 1) {
-    if (!started || !ctx) return;
+    if (!started) return;
 
     threat = Math.max(0, Math.min(1, threat));
     focus = Math.max(0, Math.min(1, focus));
@@ -80,7 +74,7 @@ export function createAudioSystem() {
 
     lowGain.gain.linearRampToValueAtTime(
       0.15 + threat * 0.5 + (1 - focus) * 0.25,
-      t + 0.15
+      t + 0.1
     );
 
     hissGain.gain.linearRampToValueAtTime(
@@ -93,7 +87,6 @@ export function createAudioSystem() {
       t + 0.2
     );
 
-    // Modern spatial positioning
     const angle = performance.now() * 0.0003 * (0.5 + threat);
 
     const x = Math.cos(angle) * 4;
@@ -112,19 +105,18 @@ export function createAudioSystem() {
   return { update };
 }
 
+// IMPORTANT: NO start() inside helper until ctx is unlocked
 function createNoise(ctx) {
   const bufferSize = 2 * ctx.sampleRate;
   const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
   const data = buffer.getChannelData(0);
 
   for (let i = 0; i < bufferSize; i++) {
-    data[i] = (Math.random() * 2 - 1) * 5;
+    data[i] = (Math.random() * 2 - 1) * 0.5;
   }
 
   const node = ctx.createBufferSource();
   node.buffer = buffer;
   node.loop = true;
-  node.start();
-
   return node;
 }
