@@ -103,9 +103,15 @@ export function createWorld(scene, camera) {
     tree.add(trunk);
     tree.add(crown);
 
-    tree.position.y = 1.6;
+    // base vertical position for animation
+    tree.userData.baseY = 1.6;
+    tree.position.y = tree.userData.baseY;
 
     randomizeTreePosition(tree, camera.position.x, camera.position.z, i);
+    // initial trees start fully grown; recycled ones will animate in
+    tree.userData.spawnTime = -1000;
+    tree.scale.set(1, 1, 1);
+
     trees.push(tree);
     scene.add(tree);
   }
@@ -135,7 +141,8 @@ export function createWorld(scene, camera) {
     stars,
     tileSize,
     gridSize,
-    noiseOffset: new THREE.Vector2(Math.random() * 1000, Math.random() * 1000)
+    noiseOffset: new THREE.Vector2(Math.random() * 1000, Math.random() * 1000),
+    internalTime: 0 // used for dreamy tree animations
   };
 }
 
@@ -197,6 +204,9 @@ export function updateWorld(world, camera, dt) {
   const cz = camera.position.z;
   const maxDist = 42;
 
+  // advance internal time for animations
+  world.internalTime = (world.internalTime || 0) + dt;
+
   // recycle trees around the player
   for (let i = 0; i < trees.length; i++) {
     const t = trees[i];
@@ -204,7 +214,64 @@ export function updateWorld(world, camera, dt) {
     const dz = t.position.z - cz;
     if (dx * dx + dz * dz > maxDist * maxDist) {
       randomizeTreePosition(t, cx, cz, i * 13.37);
+      // when tree is "reloaded" into the endless ring, animate it in
+      t.userData.spawnTime = world.internalTime;
+      // start tiny and below ground so they pop up from the distance
+      const baseY = t.userData.baseY ?? 1.6;
+      t.position.y = baseY - 2.0;
+      t.scale.set(0.05, 0.05, 0.05);
     }
+  }
+
+  // dreamy / horror-themed motion as you walk toward trees
+  for (let i = 0; i < trees.length; i++) {
+    const t = trees[i];
+    const dx = t.position.x - cx;
+    const dz = t.position.z - cz;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    const baseY = t.userData.baseY ?? 1.6;
+
+    // spawn pop-up (0–3 seconds) for trees that just appeared from far away
+    const spawnTime = t.userData.spawnTime ?? 0;
+    const age = Math.max(0, (world.internalTime - spawnTime));
+    const growDuration = 3.0;
+    let growFactor = 1.0;
+    let riseOffset = 0.0;
+
+    if (age < growDuration) {
+      const u = age / growDuration;
+      // stronger ease-out-back for a dreamy pop + slight overshoot
+      const overshoot = 1.9;
+      const eased = 1 + overshoot * Math.pow(u - 1, 3) + overshoot * Math.pow(u - 1, 2);
+
+      // scale from almost nothing to slightly oversized, then settle
+      growFactor = THREE.MathUtils.lerp(0.05, 1.15, eased);
+
+      // rise up from below the ground and overshoot a bit, more visible at distance
+      const distFactor = THREE.MathUtils.clamp((dist - 10) / 25, 0, 1);
+      const baseRise = THREE.MathUtils.lerp(0.3, 1.4, distFactor);
+      riseOffset = THREE.MathUtils.lerp(-2.0, baseRise, eased);
+    } else {
+      growFactor = 1.0;
+      riseOffset = 0.0;
+    }
+
+    // subtle breathing / leaning when near the player
+    const nearRadius = 18;
+    let lean = 0;
+    let verticalPulse = 0;
+    if (dist < nearRadius) {
+      const proximity = 1 - dist / nearRadius;
+      const tTime = world.internalTime * 1.8 + i * 0.37;
+      verticalPulse = Math.sin(tTime * 2.0) * 0.15 * proximity;
+      lean = Math.sin(tTime * 1.3) * 0.12 * proximity;
+    }
+
+    // apply animation
+    t.scale.setScalar(growFactor);
+    t.position.y = baseY + verticalPulse + riseOffset;
+    t.rotation.z = lean;
   }
 
   // reposition ground tiles so they endlessly follow the camera
